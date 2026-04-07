@@ -1,0 +1,19 @@
+# 用户风险分析系统
+# Python 3.10+
+
+openai>=1.0.0          # OpenAI 兼容接口
+httpx>=0.25.0          # HTTP 请求
+pyyaml>=6.0            # 配置
+python-dotenv>=1.0.0   # 环境变量
+PyMySQL>=1.1.0         # MySQL 数据库
+tqdm>=4.66.0           # 进度条（可选）
+pandas>=2.0.0          # 原有文件处理能力保留
+openpyxl>=3.1.0        # 读 .xlsx
+beautifulsoup4>=4.12.0 # URL 内容提取
+requests>=2.31.0       # 钉钉推送
+APScheduler>=3.10.0    # 定时调度
+
+# 若用本地小模型（可选）
+# transformers>=4.36.0
+# torch>=2.0.0
+# sentencepiece  # 某些翻译模型

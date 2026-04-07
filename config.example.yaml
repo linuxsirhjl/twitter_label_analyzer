@@ -1,0 +1,36 @@
+# 复制为 config.yaml 并填入你的 API Key
+
+# 翻译：可选 dashscope / openai-compatible / openai / baidu / deepl / none（不翻译，仅处理中文）
+translator:
+  provider: dashscope
+  # Qwen3.5（OpenAI 兼容模式）建议用你所在地域 base_url
+  # - 华北2（北京）: https://dashscope.aliyuncs.com/compatible-mode/v1
+  # - 新加坡: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: qwen3.5-plus
+  # 百度: app_id, app_key
+  # DeepL: auth_key
+  # DashScope: 用 DASHSCOPE_API_KEY 环境变量
+  # OpenAI: 用 OPENAI_API_KEY 环境变量（兼容）
+
+# 分类：推荐大模型（语义理解好、多标签灵活）
+classifier:
+  provider: dashscope
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: qwen3.5-plus   # 可替换成 qwen3.5-turbo / qwen3.5-plus 等
+
+# 要识别的标签（可自定义）
+# 「无敏感内容」：当推文明显不属于上面任一风险类型时输出该项；与风险类标签互斥（不会同时出现）。
+labels:
+  - "可能涉及恐怖袭击"
+  - "可能涉及对国家领导人不利发言"
+  - "可能涉及反动言论"
+  - "可能涉及暴力内容"
+  - "无敏感内容"
+
+# 单次 API 请求超时（秒），避免长时间卡在 0%
+api_timeout: 120
+
+# 批处理
+batch_size: 10
+max_retries: 3

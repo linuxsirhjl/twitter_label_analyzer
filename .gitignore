@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 环境变量（含 API Key，绝不上传）
+.env
+
+# 配置（含本地 API Key / base_url，模板已有 config.example.yaml）
+config.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 数据文件（体积大 / 含隐私，示例数据保留）
+data/*.csv
+data/*.xlsx
+data/*.xls
+data/result*.json
+data/result*.jsonl
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 日志
+*.log
+
+# 生成的文档（图片/docx 不上传）
+docs/*.png
+docs/*.jpg
+docs/*.docx
+
+# 统计脚本输出
+count_unanalyzed.py
