@@ -6,6 +6,7 @@ httpx>=0.25.0          # HTTP 请求
 pyyaml>=6.0            # 配置
 python-dotenv>=1.0.0   # 环境变量
 PyMySQL>=1.1.0         # MySQL 数据库
+DBUtils>=3.0.0         # 数据库连接池
 tqdm>=4.66.0           # 进度条（可选）
 pandas>=2.0.0          # 原有文件处理能力保留
 openpyxl>=3.1.0        # 读 .xlsx

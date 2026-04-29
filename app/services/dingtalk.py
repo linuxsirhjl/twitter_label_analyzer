@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 
 import requests
@@ -76,7 +77,7 @@ def send_task_report(
     if not dt_cfg.get("enabled", False):
         return
 
-    webhook: str = dt_cfg.get("webhook", "")
+    webhook: str = dt_cfg.get("webhook", "") or os.environ.get("DINGTALK_WEBHOOK", "")
     if not webhook:
         logger.warning("钉钉 webhook 未配置，跳过推送")
         return

@@ -53,11 +53,13 @@ class BasicUserInfo:
 @dataclass
 class TweetRecord:
     text: str
+    link: str = ""
 
 
 @dataclass
 class ReplyRecord:
     text: str
+    link: str = ""
 
 
 @dataclass

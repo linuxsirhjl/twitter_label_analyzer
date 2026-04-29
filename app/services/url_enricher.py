@@ -34,6 +34,28 @@ _HEADERS = {
     )
 }
 
+# 全局 requests Session（复用连接池）
+_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """获取全局 requests Session（单例模式，复用连接池）。"""
+    global _session
+    if _session is None:
+        _session = requests.Session()
+        # 配置连接池
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10,  # 连接池数量
+            pool_maxsize=20,      # 每个连接池的最大连接数
+            max_retries=0,        # 不自动重试
+            pool_block=False,     # 连接池满时不阻塞
+        )
+        _session.mount('http://', adapter)
+        _session.mount('https://', adapter)
+        _session.headers.update(_HEADERS)
+        logger.info("requests Session 已初始化（连接池：pool_connections=10, pool_maxsize=20）")
+    return _session
+
 
 def _get_proxies() -> dict | None:
     """从配置读取代理，未启用则返回 None。"""
@@ -53,17 +75,24 @@ def _get_proxies() -> dict | None:
 def _expand_url(url: str) -> str:
     """跟随跳转，返回最终真实 URL。"""
     proxies = _get_proxies()
+    session = _get_session()
     try:
-        resp = requests.get(url, allow_redirects=True, timeout=_TIMEOUT, headers=_HEADERS, proxies=proxies)
+        resp = session.get(url, allow_redirects=True, timeout=_TIMEOUT, proxies=proxies)
         real = resp.url
         logger.debug("URL 展开: %s -> %s (status=%d, redirected=%s)",
                      url, real, resp.status_code, real != url)
         return real
+    except requests.exceptions.ProxyError as e:
+        logger.warning("代理连接失败 %s: %s，跳过URL展开", url, e)
+        return url
     except Exception as e:
         logger.debug("URL 展开失败 %s: %s", url, e)
         try:
-            resp = requests.head(url, allow_redirects=True, timeout=_TIMEOUT, headers=_HEADERS, proxies=proxies)
+            resp = session.head(url, allow_redirects=True, timeout=_TIMEOUT, proxies=proxies)
             return resp.url
+        except requests.exceptions.ProxyError:
+            logger.warning("代理连接失败，跳过URL展开")
+            return url
         except Exception:
             return url
 
@@ -71,8 +100,9 @@ def _expand_url(url: str) -> str:
 def _fetch_page_summary(url: str) -> str:
     """抓取页面，优先返回 title + meta description，fallback 正文文本。"""
     proxies = _get_proxies()
+    session = _get_session()
     try:
-        resp = requests.get(url, allow_redirects=True, timeout=_TIMEOUT, headers=_HEADERS, proxies=proxies)
+        resp = session.get(url, allow_redirects=True, timeout=_TIMEOUT, proxies=proxies)
         resp.raise_for_status()
         ct = resp.headers.get("content-type", "")
         if "text/html" not in ct and "text/" not in ct:
@@ -89,6 +119,9 @@ def _fetch_page_summary(url: str) -> str:
             text = soup.get_text(separator=" ", strip=True)
             parts.append(text[:_MAX_CONTENT_CHARS])
         return " | ".join(parts)[:_MAX_CONTENT_CHARS]
+    except requests.exceptions.ProxyError as e:
+        logger.warning("代理连接失败 %s: %s，跳过内容抓取", url, e)
+        return ""
     except Exception as e:
         logger.debug("抓取页面失败 %s: %s", url, e)
         return ""

@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 from dotenv import load_dotenv
 
@@ -21,6 +23,31 @@ from app.settings import get_config, reload_config
 from app.utils.logger import setup_logging
 
 load_dotenv()
+
+
+def _send_batch_notification(batch_num: int, batch_size: int, batch_time: float, avg_time: float) -> None:
+    """发送批次完成通知到钉钉"""
+    try:
+        from app.services.dingtalk import send_task_report
+
+        # 构造批次报告
+        end_time = datetime.now()
+        start_time = datetime.fromtimestamp(end_time.timestamp() - batch_time)
+
+        message = f"批次 #{batch_num} 完成分析"
+
+        send_task_report(
+            status="success",
+            start_time=start_time,
+            end_time=end_time,
+            total_users=batch_size,
+            success=batch_size,
+            failed=0,
+            political_users=[],
+            error_summary=f"批次耗时: {batch_time:.1f}秒, 平均每用户: {avg_time:.1f}秒"
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"发送批次通知失败: {e}")
 
 
 def main() -> None:
@@ -48,17 +75,23 @@ def main() -> None:
     offset = 0
     total_ok = 0
     total_fail = 0
+    batch_count = 0
+    batch_start_time = time.time()
+    batch_user_times = []
 
     logger.info("开始批量分析，batch_size=%d workers=%d only_empty_category=%s", batch_size, args.workers, only_empty_category)
 
     def process_user(user):
+        user_start = time.time()
         try:
             result = analyze_user(user)
+            user_elapsed = time.time() - user_start
             logger.info("✓ 用户 %s [id=%d] 标签=%s", result.account, result.user_id, result.labels)
-            return True
+            return True, user_elapsed
         except Exception as e:
+            user_elapsed = time.time() - user_start
             logger.error("✗ 用户 %s [id=%d] 分析失败: %s", user.account, user.id, e, exc_info=True)
-            return False
+            return False, user_elapsed
 
     while True:
         users = get_users_batch(
@@ -75,12 +108,36 @@ def main() -> None:
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             futures = {executor.submit(process_user, u): u for u in users}
             for future in as_completed(futures):
-                if future.result():
+                success, elapsed = future.result()
+                batch_user_times.append(elapsed)
+                if success:
                     total_ok += 1
                 else:
                     total_fail += 1
 
         offset += len(users)
+
+        # 每1000个用户统计一次
+        if total_ok + total_fail >= (batch_count + 1) * 1000:
+            batch_count += 1
+            batch_elapsed = time.time() - batch_start_time
+            avg_time = sum(batch_user_times) / len(batch_user_times) if batch_user_times else 0
+
+            logger.info(
+                "=" * 60 + "\n"
+                f"批次 #{batch_count} 完成: 已处理 {batch_count * 1000} 个用户\n"
+                f"批次耗时: {batch_elapsed:.1f}秒\n"
+                f"平均每用户: {avg_time:.1f}秒\n"
+                + "=" * 60
+            )
+
+            # 推送到钉钉
+            _send_batch_notification(batch_count, 1000, batch_elapsed, avg_time)
+
+            # 重置批次计时器
+            batch_start_time = time.time()
+            batch_user_times = []
+
         if len(users) < batch_size:
             break
 

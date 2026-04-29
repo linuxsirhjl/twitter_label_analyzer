@@ -1,6 +1,7 @@
 """LLM 分类器：调用模型做标签判定与画像生成。"""
 from __future__ import annotations
 
+import base64
 import logging
 import os
 from pathlib import Path
@@ -16,8 +17,26 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "classify_user.txt"
 
+# 全局 OpenAI 客户端（单例模式，避免频繁创建连接）
+_client: OpenAI | None = None
+
+
+def _encode_image_to_base64(image_path: str) -> str | None:
+    """将图片编码为base64字符串。"""
+    try:
+        with open(image_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        logger.warning(f"无法读取图片 {image_path}: {e}")
+        return None
+
 
 def _get_client() -> OpenAI:
+    """获取 OpenAI 客户端（单例模式，复用连接池）。"""
+    global _client
+    if _client is not None:
+        return _client
+
     cfg = get_config()
     model_cfg = cfg.get("model", {})
     base_url: str | None = model_cfg.get("base_url")
@@ -29,11 +48,39 @@ def _get_client() -> OpenAI:
         api_key = "local"
 
     http_timeout = httpx.Timeout(timeout, connect=15.0)
-    return OpenAI(api_key=api_key, base_url=base_url, timeout=http_timeout)
+
+    # 创建自定义 httpx 客户端，配置连接池
+    http_client = httpx.Client(
+        timeout=http_timeout,
+        limits=httpx.Limits(
+            max_connections=100,      # 最大连接数
+            max_keepalive_connections=20,  # 保持活跃的连接数
+            keepalive_expiry=30.0,    # 连接保持时间（秒）
+        ),
+        http2=False,  # 禁用 HTTP/2（某些服务器不支持）
+    )
+
+    _client = OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=http_timeout,
+        http_client=http_client,
+    )
+    logger.info("OpenAI 客户端已初始化（连接池：max_connections=100, max_keepalive=20）")
+    return _client
 
 
-def _build_user_prompt(analysis_input: UserAnalysisInput, rule_labels: list[str]) -> str:
-    """构建发给模型的用户消息。"""
+def _build_user_prompt(
+    analysis_input: UserAnalysisInput,
+    rule_labels: list[str],
+    screenshot_paths: dict[str, str] | None = None
+) -> tuple[str, list[dict]]:
+    """
+    构建发给模型的用户消息。
+
+    Returns:
+        tuple: (文本内容, 图片列表)
+    """
     user = analysis_input.user
     cfg = get_config()
     analysis_cfg = cfg.get("analysis", {})
@@ -52,16 +99,45 @@ def _build_user_prompt(analysis_input: UserAnalysisInput, rule_labels: list[str]
         "",
     ]
 
+    images = []
+    screenshot_paths = screenshot_paths or {}
+
     if analysis_input.tweets:
         lines.append("## 推文样本（被回复或转发帖子内容）")
         for i, t in enumerate(analysis_input.tweets[:20], 1):
             lines.append(f"{i}. {t.text[:max_len]}")
+            # 如果有对应的截图，添加到图片列表
+            if t.link and t.link in screenshot_paths:
+                img_path = screenshot_paths[t.link]
+                if Path(img_path).exists():
+                    encoded = _encode_image_to_base64(img_path)
+                    if encoded:
+                        images.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{encoded}"
+                            }
+                        })
+                        lines.append(f"   [截图 {len(images)}]")
         lines.append("")
 
     if analysis_input.replies:
         lines.append("## 回复样本（被回复或转发帖子内容）")
         for i, r in enumerate(analysis_input.replies[:20], 1):
             lines.append(f"{i}. {r.text[:max_len]}")
+            # 如果有对应的截图，添加到图片列表
+            if r.link and r.link in screenshot_paths:
+                img_path = screenshot_paths[r.link]
+                if Path(img_path).exists():
+                    encoded = _encode_image_to_base64(img_path)
+                    if encoded:
+                        images.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{encoded}"
+                            }
+                        })
+                        lines.append(f"   [截图 {len(images)}]")
         lines.append("")
 
     if analysis_input.following:
@@ -70,15 +146,21 @@ def _build_user_prompt(analysis_input: UserAnalysisInput, rule_labels: list[str]
         lines.append("、".join(accounts))
         lines.append("")
 
-    return "\n".join(lines)
+    return "\n".join(lines), images
 
 
 def classify_user(
     analysis_input: UserAnalysisInput,
     rule_labels: list[str],
+    screenshot_paths: dict[str, str] | None = None,
 ) -> dict:
     """
     调用 LLM 对用户做综合标签判定和画像生成。
+
+    Args:
+        analysis_input: 用户分析输入数据
+        rule_labels: 规则引擎预判的标签
+        screenshot_paths: 推文链接到截图路径的映射 {链接: 路径}
 
     Returns:
         dict with keys: labels, reasoning_brief, profile_summary
@@ -90,14 +172,20 @@ def classify_user(
     system_prompt = _PROMPT_PATH.read_text(encoding="utf-8").format(
         labels="\n".join(f"- {l}" for l in label_order)
     )
-    user_prompt = _build_user_prompt(analysis_input, rule_labels)
+    user_prompt_text, images = _build_user_prompt(analysis_input, rule_labels, screenshot_paths)
+
+    # 构建消息内容
+    user_content = [{"type": "text", "text": user_prompt_text}]
+    if images:
+        user_content.extend(images)
+        logger.info(f"用户 {analysis_input.user.account} 包含 {len(images)} 张截图")
 
     client = _get_client()
     resp = client.chat.completions.create(
         model=model_cfg.get("model_name", "qwen-plus"),
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": user_content},
         ],
         temperature=float(model_cfg.get("temperature", 0.1)),
         max_tokens=4096,

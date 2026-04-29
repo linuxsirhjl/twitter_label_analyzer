@@ -45,3 +45,8 @@ docs/*.docx
 
 # 统计脚本输出
 count_unanalyzed.py
+.claude/
+diagnose_llm_service.py
+test_correct_api.py
+test_llm_api.py
+*.png
